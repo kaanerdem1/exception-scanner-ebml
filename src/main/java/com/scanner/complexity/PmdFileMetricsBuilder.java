@@ -119,12 +119,13 @@ final class PmdFileMetricsBuilder {
             return skippedShortAccessor(exec, sourceText, name, kind, signature, arity, start, end, physical,
                     attachDuplicateHashes, className, previousMethods);
         }
-        int cyclo = Metric.compute(JavaMetrics.CYCLO, exec, options);
-        int cognitive = Metric.compute(JavaMetrics.COGNITIVE_COMPLEXITY, exec, options);
-        int ncss = Metric.compute(JavaMetrics.NCSS, exec, options);
-        int npath = PmdMetricsAligner.capNpath(Metric.compute(JavaMetrics.NPATH, exec, options));
+        int cyclo = unboxOrZero(Metric.compute(JavaMetrics.CYCLO, exec, options));
+        int ncss = unboxOrZero(Metric.compute(JavaMetrics.NCSS, exec, options));
+        boolean heavy = PmdHeavyMetricGuard.skipExplosiveMetrics(cyclo, ncss);
+        int cognitive = unboxOrZero(Metric.compute(JavaMetrics.COGNITIVE_COMPLEXITY, exec, options));
+        int npath = PmdMetricsAligner.safeNpath(exec, options, cyclo, ncss);
         PmdAstMethodStats.Stats stats = PmdAstMethodStats.analyze(exec);
-        HalsteadMetrics halstead = PmdHalsteadApproximation.analyze(exec);
+        HalsteadMetrics halstead = heavy ? HalsteadMetrics.EMPTY : PmdHalsteadApproximation.analyze(exec);
         // Risk LOC = NCSS (yorum / boş satır hariç). physical satır aralığı yorumları da kapsar — skora girmez.
         int codeLines = ncss > 0 ? ncss : Math.max(countCodeLinesExcludingComments(sourceText, start, end), 1);
 
@@ -298,6 +299,10 @@ final class PmdFileMetricsBuilder {
             }
         }
         return count;
+    }
+
+    private static int unboxOrZero(Integer value) {
+        return value == null ? 0 : value;
     }
 
     private static int methodSpan(MethodMetric m) {

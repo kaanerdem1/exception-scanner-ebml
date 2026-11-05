@@ -34,7 +34,7 @@ import java.util.Optional;
  */
 final class PmdMetricsAligner {
 
-    private static final int NPATH_CAP = 2_000_000_000;
+    static final int NPATH_CAP = 2_000_000_000;
 
     private PmdMetricsAligner() {
     }
@@ -192,10 +192,10 @@ final class PmdMetricsAligner {
             root.descendants(ASTExecutableDeclaration.class).forEach(exec -> {
                 String typeName = enclosingTypeSimpleName(exec).orElse("");
                 MethodKey key = new MethodKey(typeName, exec.getName(), exec.getBeginLine());
-                int cyclo = Metric.compute(JavaMetrics.CYCLO, exec, options);
-                int cognitive = Metric.compute(JavaMetrics.COGNITIVE_COMPLEXITY, exec, options);
-                int ncss = Metric.compute(JavaMetrics.NCSS, exec, options);
-                int npath = capNpath(Metric.compute(JavaMetrics.NPATH, exec, options));
+                int cyclo = unbox(Metric.compute(JavaMetrics.CYCLO, exec, options));
+                int cognitive = unbox(Metric.compute(JavaMetrics.COGNITIVE_COMPLEXITY, exec, options));
+                int ncss = unbox(Metric.compute(JavaMetrics.NCSS, exec, options));
+                int npath = safeNpath(exec, options, cyclo, ncss);
                 map.put(key, new PmdMethodMetrics(cyclo, cognitive, ncss, npath));
             });
             return map;
@@ -206,6 +206,18 @@ final class PmdMetricsAligner {
         return exec.ancestors(ASTTypeDeclaration.class)
                 .firstOpt()
                 .map(ASTTypeDeclaration::getSimpleName);
+    }
+
+    /** NPATH üstel; ağır metotta sayılmaz, tavan yazılır (skor CC/cognitive/LOC). */
+    static int safeNpath(ASTExecutableDeclaration exec, MetricOptions options, int cyclo, int ncss) {
+        if (PmdHeavyMetricGuard.skipExplosiveMetrics(cyclo, ncss)) {
+            return NPATH_CAP;
+        }
+        return capNpath(Metric.compute(JavaMetrics.NPATH, exec, options));
+    }
+
+    private static int unbox(Integer value) {
+        return value == null ? 0 : value;
     }
 
     static int capNpath(BigInteger npath) {

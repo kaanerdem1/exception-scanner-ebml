@@ -22,11 +22,7 @@
             <property name="reportLevel" value="15"/>
         </properties>
     </rule>
-    <rule ref="category/java/design.xml/NPathComplexity">
-        <properties>
-            <property name="reportLevel" value="200"/>
-        </properties>
-    </rule>
+    <!-- NPathComplexity kuralı NPATH sayar; dallanmalı metotta ADIM 3 kilitlenebilir. Skora girmiyor. -->
     <rule ref="category/java/design.xml/NcssCount">
         <properties>
             <property name="methodReportLevel" value="50"/>

@@ -20,11 +20,12 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.Locale;
 import java.util.stream.Collectors;
@@ -39,6 +40,8 @@ public final class PmdNativeProjectScanner {
             "PMD-only scan (ruleset + JavaMetrics + PMD AST stats + violation enrich)";
 
     private static final String CACHE_PIPELINE = "pmd-native";
+    /** Tek dosya PMD metriği bu süreyi aşarsa atlanır (NPATH kilitlenmesi). */
+    private static final long METRICS_FILE_TIMEOUT_SEC = 90;
 
     private final Charset charset;
     private final ParserConfiguration.LanguageLevel languageLevel;
@@ -302,34 +305,59 @@ public final class PmdNativeProjectScanner {
             return List.of();
         }
         List<FileMetric> files = Collections.synchronizedList(new ArrayList<>());
+        List<FileError> errorSink = Collections.synchronizedList(errors);
         AtomicInteger processed = new AtomicInteger();
-        int workers = incrementalEngine != null ? 1 : scanOptions.workers();
+        int workers = incrementalEngine != null ? 1 : Math.max(1, scanOptions.workers());
         ExecutorService pool = Executors.newFixedThreadPool(workers);
         try {
-            List<Callable<Void>> tasks = new ArrayList<>();
+            List<Future<Void>> futures = new ArrayList<>();
             for (Path source : sources) {
-                tasks.add(() -> {
-                    metricsOne(source, base, files, errors, violationsByPath, attachDuplicateHashes,
-                            incrementalEngine, cacheCounters);
+                Path src = source;
+                futures.add(pool.submit(() -> {
+                    try {
+                        metricsOne(src, base, files, errorSink, violationsByPath, attachDuplicateHashes,
+                                incrementalEngine, cacheCounters);
+                    } catch (Throwable t) {
+                        if (t instanceof VirtualMachineError) {
+                            throw t;
+                        }
+                        String relative = JavaSourceDiscovery.relativePath(base, src);
+                        System.err.printf(Locale.ROOT,
+                                "[PMD-NATIVE]   ADIM 4/7 yakalanmayan hata: %s — %s%n",
+                                relative, describe(t));
+                        errorSink.add(new FileError(relative, "PMD metrics: " + describe(t)));
+                    }
                     int n = processed.incrementAndGet();
-                    if (n % scanOptions.progressEvery() == 0 || n == sources.size()) {
+                    int every = Math.max(1, scanOptions.progressEvery());
+                    if (n % every == 0 || n == sources.size()) {
                         System.err.println("[PMD-NATIVE] PMD metrics: " + n + "/" + sources.size() + " files");
                     }
                     return null;
-                });
+                }));
             }
-            for (Future<Void> future : pool.invokeAll(tasks)) {
-                future.get();
+            for (int i = 0; i < futures.size(); i++) {
+                Future<Void> future = futures.get(i);
+                try {
+                    future.get(METRICS_FILE_TIMEOUT_SEC, TimeUnit.SECONDS);
+                } catch (TimeoutException e) {
+                    Path src = sources.get(i);
+                    String relative = JavaSourceDiscovery.relativePath(base, src);
+                    System.err.printf(Locale.ROOT,
+                            "[PMD-NATIVE]   ADIM 4/7 zaman aşımı (%ds): %s — dosya atlandı%n",
+                            METRICS_FILE_TIMEOUT_SEC, relative);
+                    errorSink.add(new FileError(relative, "PMD metrics timeout " + METRICS_FILE_TIMEOUT_SEC + "s"));
+                    future.cancel(true);
+                }
             }
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new RuntimeException("PMD metrics interrupted", e);
         } catch (ExecutionException e) {
             Throwable cause = e.getCause() != null ? e.getCause() : e;
-            System.err.println("[PMD-NATIVE] ✗ ADIM 4/7: paralel metrik görevi patladı — " + cause.getMessage());
-            throw new RuntimeException("PMD metrics failed", cause);
+            System.err.println("[PMD-NATIVE] ✗ ADIM 4/7: paralel metrik görevi patladı — " + describe(cause));
+            throw new RuntimeException("PMD metrics failed: " + describe(cause), cause);
         } finally {
-            pool.shutdown();
+            pool.shutdownNow();
         }
         if (scanOptions.reportDetail() == ReportDetail.SUMMARY) {
             return files.stream().map(PmdNativeProjectScanner::summaryStub).collect(Collectors.toList());
@@ -376,9 +404,20 @@ public final class PmdNativeProjectScanner {
             }
         } catch (Exception e) {
             System.err.printf(Locale.ROOT,
-                    "[PMD-NATIVE]   ADIM 4/7 dosya hatası: %s — %s%n", relative, e.getMessage());
-            errors.add(new FileError(relative, "PMD metrics: " + e.getMessage()));
+                    "[PMD-NATIVE]   ADIM 4/7 dosya hatası: %s — %s%n", relative, describe(e));
+            errors.add(new FileError(relative, "PMD metrics: " + describe(e)));
         }
+    }
+
+    private static String describe(Throwable t) {
+        if (t == null) {
+            return "unknown";
+        }
+        String msg = t.getMessage();
+        if (msg != null && !msg.isBlank()) {
+            return t.getClass().getSimpleName() + ": " + msg;
+        }
+        return t.getClass().getSimpleName();
     }
 
     private static final class PmdCacheRunCounters {
