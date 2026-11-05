@@ -106,6 +106,9 @@ final class PmdMetricsAligner {
 
     private static MethodMetric withPmdMetrics(MethodMetric method, PmdMethodMetrics pmd,
                                                RiskCalculator riskCalculator) {
+        if (MethodAccessorFilter.isTrivialShortAccessor(method)) {
+            return method;
+        }
         if (method.cyclomaticComplexity() == pmd.cyclomaticComplexity()
                 && method.cognitiveComplexity() == pmd.cognitiveComplexity()
                 && method.ncssCount() == pmd.ncssCount()

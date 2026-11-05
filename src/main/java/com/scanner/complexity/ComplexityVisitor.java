@@ -433,9 +433,13 @@ public class ComplexityVisitor extends VoidVisitorAdapter<Void> {
         String structuralHash = body != null ? HashService.structuralHash(body) : "";
         boolean reuse = previous != null && !methodHash.isEmpty() && methodHash.equals(previous.methodHash());
 
+        int physical = Math.max(0, endLine - start + 1);
         Assessment risk;
         boolean god;
-        if (reuse) {
+        if (MethodAccessorFilter.isTrivialShortAccessor(kind, name, parameterCount, physical)) {
+            risk = new Assessment(0.0, RiskLevel.LOW, List.of(), null);
+            god = false;
+        } else if (reuse) {
             risk = new Assessment(previous.riskScore(), previous.riskLevel(), previous.riskFactors(),
                     previous.riskBreakdown());
             god = previous.godMethod();

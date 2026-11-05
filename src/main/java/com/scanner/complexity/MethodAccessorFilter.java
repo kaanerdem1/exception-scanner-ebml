@@ -5,6 +5,11 @@ package com.scanner.complexity;
  */
 public final class MethodAccessorFilter {
 
+    /** Tek/çift satır get/set/is — JavaMetrics + RiskCalculator atlanır. */
+    static final int MAX_TRIVIAL_PHYSICAL_LINES = 2;
+    /** JSON / DB yayın eşiği (db.method.risk.min.score varsayılanı). */
+    public static final double DEFAULT_PUBLISH_MIN_SCORE = 30;
+
     private static final int MAX_CYCLOMATIC = 2;
     private static final int MAX_CODE_LINES = 8;
     private static final int MAX_LOGICAL_STATEMENTS = 3;
@@ -35,6 +40,14 @@ public final class MethodAccessorFilter {
         if (outboundDistinctCalls > 0 || catchClauses > 0) {
             return false;
         }
+        return isAccessorName(name, parameterCount);
+    }
+
+    /** getX / isX / setX imza kalıbı (gövdeye bakılmaz). */
+    static boolean isAccessorName(String name, int parameterCount) {
+        if (name == null || name.isEmpty()) {
+            return false;
+        }
         int params = parameterCount;
         if (name.startsWith("get") && name.length() > 3 && params == 0) {
             return true;
@@ -43,5 +56,33 @@ public final class MethodAccessorFilter {
             return true;
         }
         return name.startsWith("set") && name.length() > 3 && params == 1;
+    }
+
+    /**
+     * 1–2 fiziksel satırlık getter/setter/is — isim + satır; skor üretilmez.
+     */
+    public static boolean isTrivialShortAccessor(String kind, String name, int parameterCount, int physicalLines) {
+        return "METHOD".equals(kind)
+                && physicalLines > 0
+                && physicalLines <= MAX_TRIVIAL_PHYSICAL_LINES
+                && isAccessorName(name, parameterCount);
+    }
+
+    public static boolean isTrivialShortAccessor(MethodMetric method) {
+        if (method == null) {
+            return false;
+        }
+        return isTrivialShortAccessor(method.kind(), method.name(), method.parameterCount(), method.physicalLines());
+    }
+
+    /** JSON / Markdown metot listesine yazılmaz (DB ile aynı kural). */
+    public static boolean omitFromPublishedReport(MethodMetric method, double minScore) {
+        if (method == null) {
+            return true;
+        }
+        if (isTrivialShortAccessor(method) || isSimpleGetterOrSetter(method)) {
+            return true;
+        }
+        return method.riskScore() < minScore;
     }
 }

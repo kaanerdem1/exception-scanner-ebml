@@ -1024,6 +1024,7 @@ public final class PostgresExporter implements DbCatalog, AutoCloseable {
 
         List<RiskInsertRow> rows = new ArrayList<RiskInsertRow>();
         java.util.Set<String> seenUid = new java.util.LinkedHashSet<String>();
+        java.util.Set<String> seenLine = new java.util.LinkedHashSet<String>();
         for (com.scanner.complexity.AnalysisReport.FileMetric f : report.files()) {
             for (com.scanner.complexity.AnalysisReport.ClassMetric c : f.classes()) {
                 for (com.scanner.complexity.MethodMetric m : c.methods()) {
@@ -1031,7 +1032,8 @@ public final class PostgresExporter implements DbCatalog, AutoCloseable {
                         continue;
                     }
                     String uid = com.scanner.complexity.ComplexityJson.methodUid(f.path(), c.name(), m);
-                    if (!seenUid.add(uid)) {
+                    String lineKey = f.path() + "#" + c.name() + "#" + m.name() + "#" + m.startLine();
+                    if (!seenUid.add(uid) || !seenLine.add(lineKey)) {
                         ci.methodsSkippedDuplicateUid++;
                         continue;
                     }
@@ -1114,7 +1116,8 @@ public final class PostgresExporter implements DbCatalog, AutoCloseable {
 
     /** DÜŞÜK skor ve basit getter/setter env.method_risk_analyze'e yazılmaz. */
     private boolean shouldPersistMethodRisk(com.scanner.complexity.MethodMetric m, ComplexityInsert ci) {
-        if (com.scanner.complexity.MethodAccessorFilter.isSimpleGetterOrSetter(m)) {
+        if (com.scanner.complexity.MethodAccessorFilter.isTrivialShortAccessor(m)
+                || com.scanner.complexity.MethodAccessorFilter.isSimpleGetterOrSetter(m)) {
             ci.methodsSkippedAccessor++;
             return false;
         }

@@ -8,6 +8,8 @@ import com.scanner.complexity.RiskCalculator.Assessment;
 import net.sourceforge.pmd.lang.java.ast.ASTCompilationUnit;
 import net.sourceforge.pmd.lang.java.ast.ASTConstructorDeclaration;
 import net.sourceforge.pmd.lang.java.ast.ASTExecutableDeclaration;
+import net.sourceforge.pmd.lang.java.ast.ASTFormalParameter;
+import net.sourceforge.pmd.lang.java.ast.ASTFormalParameters;
 import net.sourceforge.pmd.lang.java.ast.ASTMethodDeclaration;
 import net.sourceforge.pmd.lang.java.ast.ASTTypeDeclaration;
 import net.sourceforge.pmd.lang.java.metrics.JavaMetrics;
@@ -76,12 +78,18 @@ final class PmdFileMetricsBuilder {
                                          MetricOptions options, RiskCalculator riskCalculator,
                                          boolean attachDuplicateHashes, Map<String, MethodMetric> previousMethods) {
         String simpleName = type.getSimpleName();
-        List<MethodMetric> methods = new ArrayList<>();
+        java.util.LinkedHashMap<String, MethodMetric> methodsByLine = new java.util.LinkedHashMap<>();
         String className = simpleName;
         for (ASTExecutableDeclaration exec : type.getOperations().toList()) {
-            methods.add(buildMethod(exec, sourceText, fileViolations, options, riskCalculator, attachDuplicateHashes,
-                    className, previousMethods));
+            MethodMetric built = buildMethod(exec, sourceText, fileViolations, options, riskCalculator,
+                    attachDuplicateHashes, className, previousMethods);
+            String lineKey = built.startLine() + "#" + built.name();
+            MethodMetric previous = methodsByLine.get(lineKey);
+            if (previous == null || methodSpan(built) > methodSpan(previous)) {
+                methodsByLine.put(lineKey, built);
+            }
         }
+        List<MethodMetric> methods = new ArrayList<>(methodsByLine.values());
         int wmc = methods.stream().mapToInt(MethodMetric::cyclomaticComplexity).sum();
         int maxCc = methods.stream().mapToInt(MethodMetric::cyclomaticComplexity).max().orElse(0);
         double avg = methods.isEmpty() ? 0.0 : Math.round(wmc * 100.0 / methods.size()) / 100.0;
@@ -100,19 +108,23 @@ final class PmdFileMetricsBuilder {
                                             List<PmdViolationRow> fileViolations, MetricOptions options,
                                             RiskCalculator riskCalculator, boolean attachDuplicateHashes,
                                             String className, Map<String, MethodMetric> previousMethods) {
+        String name = exec.getName();
+        String kind = exec instanceof ASTConstructorDeclaration ? "CONSTRUCTOR" : "METHOD";
+        int arity = exec.getArity();
+        String signature = methodSignature(exec);
+        int start = exec.getBeginLine();
+        int end = resolveMethodEndLine(sourceText, start, exec.getEndLine());
+        int physical = Math.max(0, end - start + 1);
+        if (MethodAccessorFilter.isTrivialShortAccessor(kind, name, arity, physical)) {
+            return skippedShortAccessor(exec, sourceText, name, kind, signature, arity, start, end, physical,
+                    attachDuplicateHashes, className, previousMethods);
+        }
         int cyclo = Metric.compute(JavaMetrics.CYCLO, exec, options);
         int cognitive = Metric.compute(JavaMetrics.COGNITIVE_COMPLEXITY, exec, options);
         int ncss = Metric.compute(JavaMetrics.NCSS, exec, options);
         int npath = PmdMetricsAligner.capNpath(Metric.compute(JavaMetrics.NPATH, exec, options));
         PmdAstMethodStats.Stats stats = PmdAstMethodStats.analyze(exec);
         HalsteadMetrics halstead = PmdHalsteadApproximation.analyze(exec);
-        String name = exec.getName();
-        String kind = exec instanceof ASTConstructorDeclaration ? "CONSTRUCTOR" : "METHOD";
-        int arity = exec.getArity();
-        String signature = name + "(" + arity + " param)";
-        int start = exec.getBeginLine();
-        int end = resolveMethodEndLine(sourceText, start, exec.getEndLine());
-        int physical = Math.max(0, end - start + 1);
         // Risk LOC = NCSS (yorum / boş satır hariç). physical satır aralığı yorumları da kapsar — skora girmez.
         int codeLines = ncss > 0 ? ncss : Math.max(countCodeLinesExcludingComments(sourceText, start, end), 1);
 
@@ -157,6 +169,29 @@ final class PmdFileMetricsBuilder {
                 scan.maxBooleanOperatorsInCondition(), scan.maxNestingDepth(), arity, god, risk.score(), risk.level(),
                 risk.factors(), risk.breakdown(), halstead, List.of(), List.of(), methodHash, reuse, List.of(),
                 bodyHash, structuralOut, npath, ncss);
+    }
+
+    /** 1–2 satır get/set/is: JavaMetrics, AST sayaç ve RiskCalculator yok. */
+    private static MethodMetric skippedShortAccessor(ASTExecutableDeclaration exec, String sourceText,
+                                                     String name, String kind, String signature, int arity,
+                                                     int start, int end, int physical, boolean attachDuplicateHashes,
+                                                     String className, Map<String, MethodMetric> previousMethods) {
+        int loc = Math.max(1, Math.min(physical, MethodAccessorFilter.MAX_TRIVIAL_PHYSICAL_LINES));
+        PmdSourceMethodHashes.Hashes hashes = PmdSourceMethodHashes.fromSourceSlice(sourceText, start, end);
+        String bodyHash = hashes.bodyHash() == null ? "" : hashes.bodyHash();
+        String methodHash = bodyHash;
+        String structuralOut = attachDuplicateHashes ? hashes.structuralHash() : "";
+        String cacheKey = className + "#" + signature;
+        MethodMetric previous = previousMethods.get(cacheKey);
+        String previousBody = previous == null ? ""
+                : (previous.methodHash() != null && !previous.methodHash().isEmpty()
+                ? previous.methodHash()
+                : previous.bodyHash() == null ? "" : previous.bodyHash());
+        boolean reuse = previous != null && !bodyHash.isEmpty() && bodyHash.equals(previousBody);
+        return new MethodMetric(name, kind, signature, returnType(exec), start, end, 1, physical, loc,
+                1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, arity, false, 0.0, RiskLevel.LOW,
+                List.of(), null, HalsteadMetrics.EMPTY, List.of(), List.of(), methodHash, reuse, List.of(),
+                bodyHash, structuralOut, 1, loc);
     }
 
     private static MethodScanValues baseScanFromSkeleton(MethodMetric method) {
@@ -263,6 +298,58 @@ final class PmdFileMetricsBuilder {
             }
         }
         return count;
+    }
+
+    private static int methodSpan(MethodMetric m) {
+        return Math.max(0, m.endLine() - m.startLine());
+    }
+
+    /** Parser ile aynı yazım: getCoverPledge() / foo(String, int) — "N param" değil. */
+    static String methodSignature(ASTExecutableDeclaration exec) {
+        String name = exec.getName();
+        ASTFormalParameters params = exec.getFormalParameters();
+        if (params == null || params.size() == 0) {
+            return name + "()";
+        }
+        StringBuilder sb = new StringBuilder(name).append('(');
+        boolean first = true;
+        for (ASTFormalParameter p : params) {
+            if (!first) {
+                sb.append(", ");
+            }
+            first = false;
+            sb.append(formalTypeLabel(p));
+            if (p.isVarargs()) {
+                sb.append("...");
+            }
+        }
+        return sb.append(')').toString();
+    }
+
+    private static String formalTypeLabel(ASTFormalParameter parameter) {
+        try {
+            if (parameter.getTypeNode() != null) {
+                return simpleTypeName(parameter.getTypeNode().getTypeMirror().toString());
+            }
+        } catch (RuntimeException ignored) {
+            // type resolution yoksa aşağı
+        }
+        return "Object";
+    }
+
+    private static String simpleTypeName(String type) {
+        if (type == null || type.isEmpty()) {
+            return "Object";
+        }
+        String trimmed = type.replace(" ", "");
+        int generic = trimmed.indexOf('<');
+        String raw = generic >= 0 ? trimmed.substring(0, generic) : trimmed;
+        int dot = raw.lastIndexOf('.');
+        String simple = dot >= 0 ? raw.substring(dot + 1) : raw;
+        if (generic >= 0) {
+            return simple + trimmed.substring(generic);
+        }
+        return simple;
     }
 
     private static String returnType(ASTExecutableDeclaration exec) {

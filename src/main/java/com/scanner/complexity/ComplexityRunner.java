@@ -83,7 +83,7 @@ public final class ComplexityRunner {
     private Result write(String engine, AnalysisReport report, Path json, Path md) throws IOException {
         Files.createDirectories(json.toAbsolutePath().getParent());
         try (Writer w = Files.newBufferedWriter(json, StandardCharsets.UTF_8)) {
-            AnalysisReportJsonWriter.write(report, w, true);
+            AnalysisReportJsonWriter.write(report, w, true, cfg.methodRiskMinScore);
         }
         if (cfg.markdown) {
             try (Writer w = Files.newBufferedWriter(md, StandardCharsets.UTF_8)) {

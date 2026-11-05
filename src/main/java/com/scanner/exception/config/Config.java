@@ -207,6 +207,8 @@ public final class Config {
         public final Path cacheDirectory;
         public final List<String> include;
         public final List<String> exclude;
+        /** JSON metot listesi ve DB ile aynı taban (db.method.risk.min.score). */
+        public final double methodRiskMinScore;
 
         Complexity(Properties p) {
             enabled = Boolean.parseBoolean(get(p, "complexity.enabled", "false"));
@@ -241,6 +243,10 @@ public final class Config {
             include = list(get(p, "complexity.include", ""));
             exclude = list(get(p, "complexity.exclude",
                     "**/src/test/**,**/*ibatis*,**/ibatis/**,**/*Stub.java"));
+            methodRiskMinScore = Double.parseDouble(get(p, "db.method.risk.min.score", "30").trim());
+            if (methodRiskMinScore < 0) {
+                throw new IllegalArgumentException("db.method.risk.min.score negatif olamaz: " + methodRiskMinScore);
+            }
         }
     }
 

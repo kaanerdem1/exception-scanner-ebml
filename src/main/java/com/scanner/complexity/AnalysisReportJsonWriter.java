@@ -17,22 +17,27 @@ public final class AnalysisReportJsonWriter {
     }
 
     public static void write(AnalysisReport report, Writer out, boolean compact) throws IOException {
+        write(report, out, compact, MethodAccessorFilter.DEFAULT_PUBLISH_MIN_SCORE);
+    }
+
+    public static void write(AnalysisReport report, Writer out, boolean compact, double methodRiskMinScore)
+            throws IOException {
         JsonWriter writer = new JsonWriter(out);
         if (!compact) {
             writer.setIndent("  ");
         }
-        writeReport(writer, report);
+        writeReport(writer, report, methodRiskMinScore);
         writer.flush();
     }
 
-    private static void writeReport(JsonWriter w, AnalysisReport report) throws IOException {
+    private static void writeReport(JsonWriter w, AnalysisReport report, double methodRiskMinScore) throws IOException {
         w.beginObject();
         w.name("tool").value(report.tool());
         w.name("generatedAt").value(report.generatedAt());
         w.name("analyzedPath").value(report.analyzedPath());
         w.name("parserLanguageLevel").value(report.parserLanguageLevel());
         writeRiskModel(w, report.riskModel());
-        writeJsonLegend(w, report);
+        writeJsonLegend(w, report, methodRiskMinScore);
         writeSummary(w, report.summary());
         writeScanDiagnostics(w, report.scanDiagnostics());
         writeCacheStatistics(w, report.cacheStatistics());
@@ -42,7 +47,7 @@ public final class AnalysisReportJsonWriter {
         writePmdRulesetPhase(w, report.pmdRulesetPhase());
         writeHotspots(w, report.topRiskyMethods());
         String pipeline = report.tool().toLowerCase(Locale.ROOT).contains("pmd") ? "pmd-native" : "parser";
-        writeFiles(w, report.files(), report.analyzedPath(), report.riskModel(), pipeline);
+        writeFiles(w, report.files(), report.analyzedPath(), report.riskModel(), pipeline, methodRiskMinScore);
         writeErrors(w, report.errors());
         w.endObject();
     }
@@ -171,7 +176,8 @@ public final class AnalysisReportJsonWriter {
     }
 
     private static void writeFiles(JsonWriter w, List<AnalysisReport.FileMetric> files, String analyzedPath,
-                                   AnalysisReport.RiskModel riskModel, String pipeline) throws IOException {
+                                   AnalysisReport.RiskModel riskModel, String pipeline, double methodRiskMinScore)
+            throws IOException {
         String profileVersion = riskModel.version();
         w.name("files");
         w.beginArray();
@@ -216,6 +222,9 @@ public final class AnalysisReportJsonWriter {
                 w.name("methods");
                 w.beginArray();
                 for (MethodMetric m : type.methods()) {
+                    if (MethodAccessorFilter.omitFromPublishedReport(m, methodRiskMinScore)) {
+                        continue;
+                    }
                     writeMethod(w, file.path(), type.name(), m, analyzedPath, profileVersion, pipeline, riskModel);
                 }
                 w.endArray();
@@ -282,9 +291,14 @@ public final class AnalysisReportJsonWriter {
     }
 
     /** Root-level hints for JSON consumers (DB host, diff tools). */
-    private static void writeJsonLegend(JsonWriter w, AnalysisReport report) throws IOException {
+    private static void writeJsonLegend(JsonWriter w, AnalysisReport report, double methodRiskMinScore)
+            throws IOException {
         w.name("jsonLegend");
         w.beginObject();
+        w.name("omittedMethods").value(
+                "files[].classes[].methods omits getters/setters/is-accessors and riskScore < "
+                        + methodRiskMinScore + " (same floor as env.method_risk_analyze / db.method.risk.min.score). "
+                        + "summary.methodCount still includes them. 1-2 line accessors are not risk-scored.");
         w.name("riskScoreDimensions").value(
                 "Per method: rawValue = counted metric; subScore = 0-100; threshold* = profile dikkat/yuksek/kritik.");
         w.name("riskScoreComposition").value(

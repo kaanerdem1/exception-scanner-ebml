@@ -477,14 +477,16 @@ Klonlanamayan repolar atlanır; bir repoda analiz hata verirse diğerleri devam 
 | ≤ 10 | **35** |
 | ≤ 15 | **45** |
 
-5 satırlık basit bir metot 45–50 alamaz (en fazla 25). Getter/setter/is-accessor zaten rapor tablosu ve hotspot’tan çıkar (`MethodAccessorFilter`). PMD bool-op sayımı yalnızca if/loop koşulundadır.
+5 satırlık basit bir metot 45–50 alamaz (en fazla 25). Getter/setter/is-accessor zaten rapor tablosu ve hotspot’tan çıkar (`MethodAccessorFilter`). 1–2 fiziksel satırlık get/set/is için `JavaMetrics` ve risk skoru üretilmez. PMD bool-op sayımı yalnızca if/loop koşulundadır.
 
-### Veritabanına kayıt
+### Veritabanına ve JSON’a kayıt
 
-`env.method_risk_analyze` **yazılmaz** eğer:
+`env.method_risk_analyze` ve analiz JSON’undaki `files[].classes[].methods` **yazılmaz** eğer:
 
 - `risk_score < db.method.risk.min.score` (varsayılan **30**, DÜŞÜK bant)
 - veya metot basit getter/setter (`MethodAccessorFilter`)
+
+`summary.methodCount` hâlâ tüm metotları sayar. 3+ satırlık `getCustomer()` gibi iş yapan metotlar ölçülür; skor ≥ 30 ise yazılır.
 
 `db.enabled=true` ise kalan satırlar exception taramasının kaydına (`env.exception_scan_run.id`) bağlı olarak iki tabloya da yazılır; her repo kendi transaction'ında, analizi biter bitmez:
 

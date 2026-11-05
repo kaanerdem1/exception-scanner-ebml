@@ -317,8 +317,8 @@ final class StandaloneReportMarkdown {
             writeMethodRow(out, r);
         }
         if (collected.excludedSimpleAccessors() > 0) {
-            out.write("\n*Basit getter/setter/is-accessor metodları tabloda gösterilmez: "
-                    + collected.excludedSimpleAccessors() + " (JSON `--detail=full` içinde durur).*\n");
+            out.write("\n*Getter/setter ve riski 30 altı metodlar tabloda gösterilmez: "
+                    + collected.excludedSimpleAccessors() + " (JSON dosya listesi de aynı eşiği kullanır).*\n");
         }
         if (!rows.isEmpty()) {
             out.write("\n† FOUT: katalog metriği; risk skoruna dahil değil.\n\n");
@@ -357,7 +357,8 @@ final class StandaloneReportMarkdown {
             }
             for (ClassMetric type : file.classes()) {
                 for (MethodMetric m : type.methods()) {
-                    if (MethodAccessorFilter.isSimpleGetterOrSetter(m)) {
+                    if (MethodAccessorFilter.omitFromPublishedReport(m,
+                            MethodAccessorFilter.DEFAULT_PUBLISH_MIN_SCORE)) {
                         excludedAccessors++;
                         continue;
                     }
@@ -393,8 +394,8 @@ final class StandaloneReportMarkdown {
             writeMethodRow(out, r);
         }
         if (excludedAccessors > 0) {
-            out.write("\n*Basit getter/setter/is-accessor metodları tabloda gösterilmez: "
-                    + excludedAccessors + " (JSON `--detail=full` içinde durur).*\n");
+            out.write("\n*Getter/setter ve riski 30 altı metodlar tabloda gösterilmez: "
+                    + excludedAccessors + " (JSON dosya listesi de aynı eşiği kullanır).*\n");
         }
         if (!rows.isEmpty()) {
             out.write("\n† FOUT: katalog metriği; risk skoruna dahil değil.\n\n");
