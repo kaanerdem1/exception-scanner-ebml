@@ -6,6 +6,7 @@ import java.nio.file.PathMatcher;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Set;
 
 /** Relative path glob include/exclude (monorepo filtreleri). */
@@ -21,6 +22,15 @@ final class PathGlobFilter {
 
     boolean accept(Path scanRoot, Path file) {
         String relative = scanRoot.relativize(file).toString().replace('\\', '/');
+        String relLower = relative.toLowerCase(Locale.ROOT);
+        if (relLower.contains("ibatis")) {
+            return false;
+        }
+        String fileName = file.getFileName() != null
+                ? file.getFileName().toString().toLowerCase(Locale.ROOT) : "";
+        if (fileName.endsWith("stub.java")) {
+            return false;
+        }
         for (PathMatcher exclude : excludes) {
             if (matches(exclude, relative)) {
                 return false;

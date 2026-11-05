@@ -57,7 +57,7 @@ public final class RiskCalibrationSupport {
 
     private static final double PMD_PARSER_GAP_TOLERANCE = 12.0;
     private static final int SHORT_LOC = 5;
-    private static final double SHORT_SIMPLE_MAX_SCORE = 35.0;
+    private static final double SHORT_SIMPLE_MAX_SCORE = 25.0;
     private static final int LONG_LOC = 60;
     private static final int LONG_COMPLEX_MIN_CC = 18;
 

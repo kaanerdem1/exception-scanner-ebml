@@ -83,4 +83,55 @@ final class PmdScanDiagnosticsLog {
             System.err.println("[PMD-NATIVE]   (Hiç dosya atlanmadı — ilk koşu, FRESH, state yolu değişti veya tüm dosyalar değişmiş olabilir.)");
         }
     }
+
+    /** Risk + persist bittikten sonra: state nerede, neye bakıldı, hangileri tarandı. */
+    static void logAfterRiskState(Path stateFile, boolean hadPreviousScan,
+                                  AnalysisReport.CacheStatistics cache, IncrementalChanges changes) {
+        System.err.println("[ÖNBELLEK] —— Risk bitti; state konumu ve karar ——");
+        if (stateFile == null) {
+            System.err.println("[ÖNBELLEK]   State yazılmadı (cache kapalı).");
+            return;
+        }
+        Path abs = stateFile.toAbsolutePath().normalize();
+        boolean exists = Files.isRegularFile(stateFile);
+        System.err.println("[ÖNBELLEK]   State dosyası: " + abs);
+        System.err.println("[ÖNBELLEK]   Diskte " + (exists ? "var (oluştu / güncellendi)" : "YOK — yazılamadı"));
+        if (exists) {
+            try {
+                System.err.printf(Locale.ROOT, "[ÖNBELLEK]   Boyut: %,d byte%n", Files.size(stateFile));
+            } catch (IOException ignored) {
+                // optional
+            }
+        }
+        System.err.println("[ÖNBELLEK]   1) State: analyzer-cache/<proje>/<repo>-pmd-analyzer-state.json");
+        System.err.println("[ÖNBELLEK]   2) fileHash (dosyanın tüm byte'ı) aynı → dosya ATLANIR, metodlara bakılmaz.");
+        System.err.println("[ÖNBELLEK]   3) fileHash farklı → yalnız o dosya PMD; her metotta bodyHash (=methodHash) aynıysa eski skor, farklıysa yeniden risk.");
+        System.err.println("[ÖNBELLEK]   structuralHash cache'de kullanılmaz (benzerlik).");
+        if (!hadPreviousScan || cache == null) {
+            System.err.println("[ÖNBELLEK]   Bu koşu soğuk: önceki state yok veya kimlik uyuşmadı — tüm keşfedilen .java ölçüldü.");
+            return;
+        }
+        System.err.printf(Locale.ROOT,
+                "[ÖNBELLEK]   Bu repoda: %d .java | değişmeyen (atlandı): %d | değişen/yeni (PMD + risk): %d%n",
+                cache.totalFiles(), cache.filesSkippedViaFileHash(), cache.filesReanalyzed());
+        if (changes != null && changes.comparedToPreviousScan()) {
+            System.err.printf(Locale.ROOT,
+                    "[ÖNBELLEK]   Diff: dosya +%d -%d ~%d (değişen) | metod +%d -%d ~%d%n",
+                    changes.filesAdded(), changes.filesRemoved(), changes.filesModified(),
+                    changes.methodsAdded(), changes.methodsRemoved(), changes.methodsModified());
+            int shown = 0;
+            for (IncrementalChanges.FilePathChange fc : changes.fileChanges()) {
+                if (shown >= 25) {
+                    System.err.println("[ÖNBELLEK]   … +" + (changes.fileChanges().size() - 25)
+                            + " dosya daha (log kısaltıldı)");
+                    break;
+                }
+                System.err.println("[ÖNBELLEK]   tarandı: " + fc.kind() + "  " + fc.path());
+                shown++;
+            }
+        }
+        if (cache.filesReanalyzed() == 0 && cache.totalFiles() > 0) {
+            System.err.println("[ÖNBELLEK]   Hiç dosya değişmemiş — bu repoda PMD/risk yeniden çalışmadı.");
+        }
+    }
 }

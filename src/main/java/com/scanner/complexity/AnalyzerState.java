@@ -38,7 +38,9 @@ final class AnalyzerState {
     }
 
     static final class MethodState {
+        /** Cache: gövde hash (bodyHash ile aynı). */
         String methodHash;
+        String bodyHash;
         double lastCalculatedRiskScore;
     }
 }

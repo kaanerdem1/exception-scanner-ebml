@@ -3,7 +3,7 @@ package com.scanner.complexity;
 /**
  * Basit JavaBeans getter/setter/is-accessor — risk tablosu ve hotspot gürültüsünü azaltmak için.
  */
-final class MethodAccessorFilter {
+public final class MethodAccessorFilter {
 
     private static final int MAX_CYCLOMATIC = 2;
     private static final int MAX_CODE_LINES = 8;
@@ -12,7 +12,7 @@ final class MethodAccessorFilter {
     private MethodAccessorFilter() {
     }
 
-    static boolean isSimpleGetterOrSetter(MethodMetric method) {
+    public static boolean isSimpleGetterOrSetter(MethodMetric method) {
         if (method == null) {
             return false;
         }

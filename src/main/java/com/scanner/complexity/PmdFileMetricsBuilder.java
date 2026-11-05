@@ -131,13 +131,18 @@ final class PmdFileMetricsBuilder {
         boolean god = riskCalculator.isGodMethod(scan);
 
         PmdSourceMethodHashes.Hashes hashes = PmdSourceMethodHashes.fromSourceSlice(sourceText, start, end);
-        String methodHash = hashes.bodyHash();
-        String bodyOut = attachDuplicateHashes ? hashes.bodyHash() : "";
+        // Cache katman 2: methodHash === bodyHash (gövde). structuralHash yalnız benzerlik.
+        String bodyHash = hashes.bodyHash() == null ? "" : hashes.bodyHash();
+        String methodHash = bodyHash;
         String structuralOut = attachDuplicateHashes ? hashes.structuralHash() : "";
 
         String cacheKey = className + "#" + signature;
         MethodMetric previous = previousMethods.get(cacheKey);
-        boolean reuse = previous != null && !methodHash.isEmpty() && methodHash.equals(previous.methodHash());
+        String previousBody = previous == null ? ""
+                : (previous.methodHash() != null && !previous.methodHash().isEmpty()
+                ? previous.methodHash()
+                : previous.bodyHash() == null ? "" : previous.bodyHash());
+        boolean reuse = previous != null && !bodyHash.isEmpty() && bodyHash.equals(previousBody);
         if (reuse) {
             risk = new Assessment(previous.riskScore(), previous.riskLevel(), previous.riskFactors(),
                     previous.riskBreakdown());
@@ -151,7 +156,7 @@ final class PmdFileMetricsBuilder {
                 scan.catchWithOnlyPrintStackTrace(), scan.primitiveObsessionIndex(),
                 scan.maxBooleanOperatorsInCondition(), scan.maxNestingDepth(), arity, god, risk.score(), risk.level(),
                 risk.factors(), risk.breakdown(), halstead, List.of(), List.of(), methodHash, reuse, List.of(),
-                bodyOut, structuralOut, npath, ncss);
+                bodyHash, structuralOut, npath, ncss);
     }
 
     private static MethodScanValues baseScanFromSkeleton(MethodMetric method) {

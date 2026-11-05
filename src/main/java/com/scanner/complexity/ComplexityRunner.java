@@ -98,7 +98,15 @@ public final class ComplexityRunner {
         Path stateFile = null;
         if (cfg.incrementalCache) {
             String suffix = engine == Engine.PMD ? "-pmd-analyzer-state.json" : "-parser-analyzer-state.json";
-            stateFile = sibling(baseName, suffix);
+            stateFile = persistentStateFile(baseName, suffix);
+            try {
+                Path parent = stateFile.toAbsolutePath().getParent();
+                if (parent != null) {
+                    Files.createDirectories(parent);
+                }
+            } catch (IOException e) {
+                System.err.println("[COMPLEXITY] State klasörü oluşturulamadı: " + e.getMessage());
+            }
             System.err.println("[COMPLEXITY] Artımlı önbellek (" + engine.name().toLowerCase(java.util.Locale.ROOT)
                     + "): " + stateFile.toAbsolutePath().normalize()
                     + (cfg.freshCache ? " (--fresh)" : ""));
@@ -117,5 +125,14 @@ public final class ComplexityRunner {
 
     private static Path sibling(Path baseName, String suffix) {
         return baseName.resolveSibling(baseName.getFileName() + suffix);
+    }
+
+    /** scanReports/yyyyMMdd_HHmm değil; analyzer-cache/<proje>/<repo>-pmd-analyzer-state.json */
+    private Path persistentStateFile(Path baseName, String suffix) {
+        String repo = baseName.getFileName() != null ? baseName.getFileName().toString() : "repo";
+        Path project = baseName.getParent() != null && baseName.getParent().getFileName() != null
+                ? baseName.getParent().getFileName()
+                : Path.of("_");
+        return cfg.cacheDirectory.resolve(project.toString()).resolve(repo + suffix);
     }
 }

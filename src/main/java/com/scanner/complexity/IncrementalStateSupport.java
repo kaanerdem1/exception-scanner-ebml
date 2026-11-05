@@ -52,7 +52,11 @@ final class IncrementalStateSupport {
             for (ClassMetric type : file.classes()) {
                 for (MethodMetric method : type.methods()) {
                     AnalyzerState.MethodState methodState = new AnalyzerState.MethodState();
-                    methodState.methodHash = method.methodHash();
+                    String body = method.methodHash() != null && !method.methodHash().isEmpty()
+                            ? method.methodHash()
+                            : (method.bodyHash() == null ? "" : method.bodyHash());
+                    methodState.methodHash = body;
+                    methodState.bodyHash = body;
                     methodState.lastCalculatedRiskScore = method.riskScore();
                     fileState.methods.put(type.name() + "#" + method.signature(), methodState);
                 }

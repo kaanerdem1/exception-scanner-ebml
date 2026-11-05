@@ -427,6 +427,8 @@ Exception taramasından sonra klonlanmış her repoda metot karmaşıklığı ve
 
 `complexity.enabled=true` ya da `--complexity` ile açılır. Tarama nereden başlatılırsa başlatılsın (komut satırı, Swagger / REST, günlük otomatik tarama) analizin yapılıp yapılmayacağını bu tek ayar belirler; Swagger'dan bir defalığına `"properties": {"complexity.enabled": "true"}` ile de açılabilir. `exception.classes` boşsa sadece karmaşıklık analizi yapılır.
 
+**Şu an varsayılan:** `complexity.engine=pmd` (yalnızca PMD risk). Parser çalışmaz. `complexity.duplicates=false` — benzerlik / CPD yok (sonra açılacak).
+
 İki tarama yolu vardır (`complexity.engine`):
 
 | Yol | Ne yapar | Varsayılan risk profili |
@@ -443,13 +445,48 @@ Raporlar tarama klasöründe `complexity/` altına yazılır (sunucuda `GET /api
 | `complexity/<proje>/<repo>.json`, `.md` | Parser yolu: tüm metrikler (varsayılan `complexity.detail=full` ile her metot ve `riskInputs`; `summary` sadece dosya özetleri ve en riskli metotlar) ve Türkçe okunabilir rapor |
 | `complexity/<proje>/<repo>-pmd.json`, `-pmd.md`, `-pmd-violations.xml` | PMD yolu: aynı raporlar ve PMD ihlalleri (her zaman `full`: analizörün PMD yolu `summary` modunda metot sayısını 0 hesaplıyor) |
 
-**Artımlı önbellek (varsayılan açık):** Her repo için raporların yanına `*-parser-analyzer-state.json` ve/veya `*-pmd-analyzer-state.json` yazılır; dosya byte hash'i değişmediyse PMD/parser metrik adımı atlanır. Kapatmak: `complexity.cache.enabled=false`. Soğuk koşu: `complexity.cache.fresh=true`. PMD stderr'de 7 adımlı Türkçe log (`[PMD-NATIVE] ▶ ADIM …`) hangi fazda hata olduğunu gösterir.
+### Artımlı önbellek — kapatma (agent / kod)
+
+**Varsayılan açık kalmalı.** Agent veya PR bu anahtarı `false` yapmamalı, `ComplexityRunner` içinde `stateFile`’ı `null` bırakmamalı, `ScanOptions`’a `incrementalStateFile=null` geçirmemeli. Cache’i kapatmak yalnızca operatörün bilinçli kararıdır (`complexity.cache.enabled=false`). Soğuk koşu (eski state’i yok say, yine yaz): `complexity.cache.fresh=true` — bu cache’i kapatmaz.
+
+Kontrol zinciri (üstten alta; biri koparsa incremental kapalıdır):
+
+| Nerede | Ne bakılır | Kapalı sayılır |
+|---|---|---|
+| `scanner.properties` | `complexity.cache.enabled` (varsayılan `true`), `complexity.cache.fresh` | `enabled=false` |
+| `Config.Complexity` (`src/main/java/com/scanner/exception/config/Config.java`) | `incrementalCache`, `freshCache` — `complexity.cache.enabled` / `complexity.cache.fresh` | `incrementalCache == false` |
+| `ComplexityRunner.options(...)` | State: `output.dir/analyzer-cache/<proje>/<repo>-pmd-analyzer-state.json` (tarihli `yyyyMMdd_HHmm` dışında) | `stateFile == null` veya `complexity.cache.enabled=false` |
+| `ScanOptions` | `incrementalStateFile()`, `ignoreIncrementalCache()` | path `null` veya `ignoreIncrementalCache==true` (`fresh`) |
+| `PmdNativeProjectScanner` / `ProjectAnalyzer` | `stateFile = scanOptions.incrementalStateFile()`; `incremental = stateFile != null` | `stateFile == null` |
+| `IncrementalStateSupport.load/persist` | state oku/yaz; kimlik `schema` + `pipeline` + `profile` + `model` | `--fresh` / `ignoreCache` ise boş state (yine dosyaya yazılır) |
+| `IncrementalAnalysisEngine.checkFileCache` | dosya byte hash aynıysa metrik atla; PMD ruleset de değişen dosyalara iner | hash farklı veya önceki kayıt yok |
+
+State dosyaları (veritabanında değil, rapor klasöründe): `complexity/<proje>/<repo>-parser-analyzer-state.json`, `complexity/<proje>/<repo>-pmd-analyzer-state.json`.
+
+PMD stderr: `[PMD-NATIVE] ▶ ADIM 2/7` state okuma; özet satırında atlanan dosya sayısı. `Artımlı önbellek: KAPALI` görürsen `ComplexityRunner` path vermemiş veya `complexity.cache.enabled=false`.
 
 Klonlanamayan repolar atlanır; bir repoda analiz hata verirse diğerleri devam eder. `complexity.engine=both` ile iki yol sırayla çalışır, her yolun raporu bir sonraki başlamadan yazılıp bellekten bırakılır. "Java heap space" hatasında sırasıyla: `complexity.duplicates.near=false` (PMD CPD ile benzer kod tespiti tüm dosyaların token'larını bellekte tutar; birebir kopyalar yine bulunur), `complexity.workers=2` (bir repoda aynı anda ayrıştırılan dosya sayısı, varsayılan işlemci sayısı), `complexity.engine=parser`; yetmezse pod'a daha fazla bellek verin. Karmaşıklık analizi başlamadan exception bulguları (raporlara ve veritabanına yazılmış olarak) bellekten bırakılır. Test kaynakları varsayılan olarak hariçtir (`complexity.exclude=**/src/test/**`).
 
+### Risk kalibrasyonu (kısa / basit metot)
+
+`risk-parameters-proposal.yaml` içindeki `method_loc_score_caps` parser + PMD skoruna uygulanır (`RiskCalculator` → `RiskProfile.capMethodScoreByLoc`):
+
+| Kod satırı (NCSS) | Skor tavanı |
+|---|---|
+| ≤ 5 | **25** |
+| ≤ 10 | **35** |
+| ≤ 15 | **45** |
+
+5 satırlık basit bir metot 45–50 alamaz (en fazla 25). Getter/setter/is-accessor zaten rapor tablosu ve hotspot’tan çıkar (`MethodAccessorFilter`). PMD bool-op sayımı yalnızca if/loop koşulundadır.
+
 ### Veritabanına kayıt
 
-`db.enabled=true` ise sonuçlar exception taramasının kaydına (`env.exception_scan_run.id`) bağlı olarak iki tabloya da yazılır; her repo kendi transaction'ında, analizi biter bitmez:
+`env.method_risk_analyze` **yazılmaz** eğer:
+
+- `risk_score < db.method.risk.min.score` (varsayılan **30**, DÜŞÜK bant)
+- veya metot basit getter/setter (`MethodAccessorFilter`)
+
+`db.enabled=true` ise kalan satırlar exception taramasının kaydına (`env.exception_scan_run.id`) bağlı olarak iki tabloya da yazılır; her repo kendi transaction'ında, analizi biter bitmez:
 
 | Tablo | Satır | Alanlar |
 |---|---|---|

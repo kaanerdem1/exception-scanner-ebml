@@ -193,6 +193,7 @@ public final class PmdNativeProjectScanner {
                     cacheCounters.methodsReanalyzed, elapsedMs);
             PmdScanDiagnosticsLog.logCacheOzet(cacheStatistics);
         }
+        PmdScanDiagnosticsLog.logAfterRiskState(stateFile, hadPreviousScan, cacheStatistics, incrementalChanges);
 
         try {
             if (attachHashes) {

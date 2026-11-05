@@ -203,12 +203,14 @@ public final class Config {
         public final boolean incrementalCache;
         /** true: önceki state yok sayılır, koşu sonunda yeniden yazılır */
         public final boolean freshCache;
+        /** Tarihli rapor klasörünün dışında; taramalar arası kalıcı (varsayılan output.dir/analyzer-cache) */
+        public final Path cacheDirectory;
         public final List<String> include;
         public final List<String> exclude;
 
         Complexity(Properties p) {
             enabled = Boolean.parseBoolean(get(p, "complexity.enabled", "false"));
-            String eng = get(p, "complexity.engine", "parser").trim().toUpperCase(Locale.ROOT);
+            String eng = get(p, "complexity.engine", "pmd").trim().toUpperCase(Locale.ROOT);
             try {
                 engine = com.scanner.complexity.ComplexityRunner.Engine.valueOf(eng);
             } catch (IllegalArgumentException e) {
@@ -224,16 +226,21 @@ public final class Config {
                 throw new IllegalArgumentException("complexity.detail full veya summary olmalı: " + detail);
             }
             fullDetail = detail.equals("full");
-            duplicates = Boolean.parseBoolean(get(p, "complexity.duplicates", "true"));
-            nearDuplicates = Boolean.parseBoolean(get(p, "complexity.duplicates.near", "true"));
-            markdown = Boolean.parseBoolean(get(p, "complexity.markdown", "true"));
+            duplicates = Boolean.parseBoolean(get(p, "complexity.duplicates", "false"));
+            nearDuplicates = Boolean.parseBoolean(get(p, "complexity.duplicates.near", "false"));
+            markdown = Boolean.parseBoolean(get(p, "complexity.markdown", "false"));
             workers = Integer.parseInt(get(p, "complexity.workers", "0").trim());
             if (workers < 0) throw new IllegalArgumentException("complexity.workers 0 veya pozitif olmalı: " + workers);
             riskProfile = get(p, "complexity.risk.profile", "").trim();
             incrementalCache = Boolean.parseBoolean(get(p, "complexity.cache.enabled", "true"));
             freshCache = Boolean.parseBoolean(get(p, "complexity.cache.fresh", "false"));
+            String cacheDir = get(p, "complexity.cache.dir", "").trim();
+            cacheDirectory = cacheDir.isEmpty()
+                    ? Paths.get(get(p, "output.dir", "./scanReports")).resolve("analyzer-cache")
+                    : Paths.get(cacheDir);
             include = list(get(p, "complexity.include", ""));
-            exclude = list(get(p, "complexity.exclude", "**/src/test/**"));
+            exclude = list(get(p, "complexity.exclude",
+                    "**/src/test/**,**/*ibatis*,**/ibatis/**,**/*Stub.java"));
         }
     }
 
@@ -263,6 +270,8 @@ public final class Config {
         public final String swallowedTable;
         /** Bu orandan düşük benzerlik grupları method_similarity'ye yazılmaz (tablonun alt sınır kısıtıyla aynı tutulur) */
         public final int similarityMinPercent;
+        /** Bu skorun altındaki metotlar method_risk_analyze'e yazılmaz (DÜŞÜK bandı: &lt; 30) */
+        public final double methodRiskMinScore;
         /** Taramada taranan her repo için bir satır (rapor API'si buradan okur) */
         public final String repoTable;
         /** Kod karmaşıklığı: metot bazlı risk ve kopya / benzer kod grupları (complexity.enabled=true ile) */
@@ -310,6 +319,10 @@ public final class Config {
             methodSimilarityTable = ident(get(p, "db.method.similarity.table", schema + ".method_similarity"),
                     "db.method.similarity.table");
             similarityMinPercent = Integer.parseInt(get(p, "db.method.similarity.min.percent", "51").trim());
+            methodRiskMinScore = Double.parseDouble(get(p, "db.method.risk.min.score", "30").trim());
+            if (methodRiskMinScore < 0) {
+                throw new IllegalArgumentException("db.method.risk.min.score negatif olamaz: " + methodRiskMinScore);
+            }
             note = get(p, "db.note", "");
             noteZone = java.time.ZoneId.of(get(p, "db.note.zone", "Europe/Istanbul"));
             deepScanTable = ident(get(p, "db.deep.scan.table", schema + ".scan_run"), "db.deep.scan.table");
