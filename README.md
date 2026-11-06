@@ -479,6 +479,20 @@ Klonlanamayan repolar atlanır; bir repoda analiz hata verirse diğerleri devam 
 
 5 satırlık basit bir metot 45–50 alamaz (en fazla 25). Getter/setter/is-accessor zaten rapor tablosu ve hotspot’tan çıkar (`MethodAccessorFilter`). 1–2 fiziksel satırlık get/set/is için `JavaMetrics` ve risk skoru üretilmez. PMD bool-op sayımı yalnızca if/loop koşulundadır.
 
+### PMD metrik hataları (stack / heap) ve JVM
+
+Bazı dosyalarda PMD metrik derinliği JVM **thread stack** veya **heap** sınırına takılabilir (`StackOverflowError` / `OutOfMemoryError`). Tarayıcı artık **tüm repoyu düşürmez**: sorunlu metotlar için `errors[]` içinde **dosya + sınıf + imza + satır** kaydı oluşur; aynı metotta ölçüm yarım kaldıysa rapora **nominal yüksek metriklerle** (en az **CRITICAL** bandı, skor ≥ 80) bir satır yazılır — `riskFactors` içinde **`PMD_ANALYSIS_INCOMPLETE`** ifadesi bulunur; gerçek CC/LOC değildir, **manuel inceleme** anlamına gelir.
+
+Her metot için `VirtualMachineError` yakalanırsa **aynı dosyadaki diğer metotlara devam** edilir; yalnızca o metotta **nominal metrik + `riskScore` = 100** ve JSON’da **`metricsImputed`: true** yazılır (`riskFactors` içinde `METRICS_IMPUTED=true`). Tüm birim parse’ı veya dosya okuma burada koparsa hâlâ **dosya düzeyi** `errors[]` kalır.
+
+Operasyonel olarak:
+
+- **`java -Xss2m`** veya **`java -Xss4m`** (dar stack; özellikle Windows’ta jar çift tıklama varsayılanları) — çoğu SOE azalır.
+- **`JAVA_OPTS` / `MAVEN_OPTS`**: **` -Xmx…`** heap yetersizse.
+- **`PMD_JAVA_DISABLE_AUX_CLASSPATH_WARNINGS=true`** — classpath uyarı flood’unu kapatır (tip çözümlemesi için asıl çözüm: projeye uygun **aux classpath** / derlenmiş sınıflar).
+
+Projede gömülü PMD sürümü **`pom.xml`** içindeki **`pmd.version`** ile sabittir; güncel sürüm notları [PMD releases](https://github.com/pmd/pmd/releases).
+
 ### Veritabanına ve JSON’a kayıt
 
 `env.method_risk_analyze` ve analiz JSON’undaki `files[].classes[].methods` **yazılmaz** eğer:

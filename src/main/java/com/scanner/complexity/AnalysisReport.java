@@ -186,10 +186,29 @@ public record AnalysisReport(
             List<String> riskFactors) {
     }
 
-    public record FileError(String file, String message, ScanErrorCategory category) {
+    public record FileError(
+            String file,
+            String message,
+            ScanErrorCategory category,
+            /** Sınıf adı (basit); dosya düzeyi hatalarda boş. */
+            String className,
+            /** İmza (ör. foo(String)); dosya düzeyi hatalarda boş. */
+            String methodSignature,
+            /** Metot / oluşturucu başlangıç satırı; yoksa -1. */
+            int startLine,
+            /** Metot bitiş satırı; yoksa -1. */
+            int endLine) {
 
         public FileError(String file, String message) {
-            this(file, message, ScanErrorClassifier.classify(message));
+            this(file, message, ScanErrorClassifier.classify(message), "", "", -1, -1);
+        }
+
+        public FileError(String file, String message, ScanErrorCategory category) {
+            this(file, message, category, "", "", -1, -1);
+        }
+
+        public FileError(String file, String message, String className, String methodSignature, int startLine, int endLine) {
+            this(file, message, ScanErrorClassifier.classify(message), className, methodSignature, startLine, endLine);
         }
     }
 

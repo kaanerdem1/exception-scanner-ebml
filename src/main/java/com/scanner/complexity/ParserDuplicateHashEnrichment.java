@@ -109,7 +109,8 @@ final class ParserDuplicateHashEnrichment {
                 method.parameterCount(), method.godMethod(), method.riskScore(), method.riskLevel(),
                 method.riskFactors(), method.riskBreakdown(), method.halstead(), method.exceptionSmells(),
                 method.codeSmells(), method.methodHash(), method.analysisReused(), method.accessedFieldNames(),
-                hashes.bodyHash(), hashes.structuralHash(), method.npathComplexity(), method.ncssCount());
+                hashes.bodyHash(), hashes.structuralHash(), method.npathComplexity(), method.ncssCount(),
+                method.metricsImputed());
     }
 
     private static ClassMetric copyClassWithMethods(ClassMetric type, List<MethodMetric> methods) {

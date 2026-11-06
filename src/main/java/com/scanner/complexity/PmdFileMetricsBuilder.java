@@ -2,6 +2,7 @@ package com.scanner.complexity;
 
 import com.github.javaparser.ParserConfiguration;
 import com.scanner.complexity.AnalysisReport.ClassMetric;
+import com.scanner.complexity.AnalysisReport.FileError;
 import com.scanner.complexity.AnalysisReport.FileMetric;
 import com.scanner.complexity.AnalysisReport.PmdViolationRow;
 import com.scanner.complexity.RiskCalculator.Assessment;
@@ -39,11 +40,20 @@ final class PmdFileMetricsBuilder {
                             List<PmdViolationRow> fileViolations, RiskCalculator riskCalculator,
                             boolean attachDuplicateHashes, Map<String, MethodMetric> previousMethods,
                             String fileHash) {
+        return build(relativePath, sourceText, languageLevel, fileViolations, riskCalculator, attachDuplicateHashes,
+                previousMethods, fileHash, null);
+    }
+
+    static FileMetric build(String relativePath, String sourceText,
+                            ParserConfiguration.LanguageLevel languageLevel,
+                            List<PmdViolationRow> fileViolations, RiskCalculator riskCalculator,
+                            boolean attachDuplicateHashes, Map<String, MethodMetric> previousMethods,
+                            String fileHash, List<FileError> methodLevelErrors) {
         return PmdMetricsAligner.withParseSession(languageLevel, session -> {
             try {
                 ASTCompilationUnit unit = session.parse(sourceText, relativePath);
                 return buildFromUnit(relativePath, sourceText, unit, fileViolations, riskCalculator,
-                        attachDuplicateHashes, previousMethods, fileHash);
+                        attachDuplicateHashes, previousMethods, fileHash, methodLevelErrors);
             } catch (Exception e) {
                 throw new RuntimeException(relativePath + ": " + e.getMessage(), e);
             }
@@ -53,14 +63,15 @@ final class PmdFileMetricsBuilder {
     private static FileMetric buildFromUnit(String relativePath, String sourceText, ASTCompilationUnit unit,
                                             List<PmdViolationRow> fileViolations,
                                             RiskCalculator riskCalculator, boolean attachDuplicateHashes,
-                                            Map<String, MethodMetric> previousMethods, String fileHash) {
+                                            Map<String, MethodMetric> previousMethods, String fileHash,
+                                            List<FileError> methodLevelErrors) {
         String packageName = unit.getPackageName() == null ? "" : unit.getPackageName();
         MetricOptions options = MetricOptions.emptyOptions();
         List<ClassMetric> classes = new ArrayList<>();
         Map<String, MethodMetric> previous = previousMethods == null ? Map.of() : previousMethods;
         for (ASTTypeDeclaration type : unit.getTypeDeclarations().toList()) {
-            classes.add(buildType(type, sourceText, fileViolations, options, riskCalculator, attachDuplicateHashes,
-                    previous));
+            classes.add(buildType(relativePath, type, sourceText, fileViolations, options, riskCalculator,
+                    attachDuplicateHashes, previous, methodLevelErrors));
         }
         List<MethodMetric> allMethods = classes.stream().flatMap(c -> c.methods().stream()).toList();
         int wmc = allMethods.stream().mapToInt(MethodMetric::cyclomaticComplexity).sum();
@@ -74,15 +85,17 @@ final class PmdFileMetricsBuilder {
                 HalsteadMetrics.EMPTY, 0, 0, 0, 0, 0, resolvedFileHash, false, methodsReused);
     }
 
-    private static ClassMetric buildType(ASTTypeDeclaration type, String sourceText, List<PmdViolationRow> fileViolations,
+    private static ClassMetric buildType(String relativePath, ASTTypeDeclaration type, String sourceText,
+                                         List<PmdViolationRow> fileViolations,
                                          MetricOptions options, RiskCalculator riskCalculator,
-                                         boolean attachDuplicateHashes, Map<String, MethodMetric> previousMethods) {
+                                         boolean attachDuplicateHashes, Map<String, MethodMetric> previousMethods,
+                                         List<FileError> methodLevelErrors) {
         String simpleName = type.getSimpleName();
         java.util.LinkedHashMap<String, MethodMetric> methodsByLine = new java.util.LinkedHashMap<>();
         String className = simpleName;
         for (ASTExecutableDeclaration exec : type.getOperations().toList()) {
-            MethodMetric built = buildMethod(exec, sourceText, fileViolations, options, riskCalculator,
-                    attachDuplicateHashes, className, previousMethods);
+            MethodMetric built = buildMethod(relativePath, exec, sourceText, fileViolations, options, riskCalculator,
+                    attachDuplicateHashes, className, previousMethods, methodLevelErrors);
             String lineKey = built.startLine() + "#" + built.name();
             MethodMetric previous = methodsByLine.get(lineKey);
             if (previous == null || methodSpan(built) > methodSpan(previous)) {
@@ -104,10 +117,11 @@ final class PmdFileMetricsBuilder {
                 HalsteadMetrics.EMPTY, List.of(), 0.0, godClass, 0, 0, 0, 0, 0);
     }
 
-    private static MethodMetric buildMethod(ASTExecutableDeclaration exec, String sourceText,
+    private static MethodMetric buildMethod(String relativePath, ASTExecutableDeclaration exec, String sourceText,
                                             List<PmdViolationRow> fileViolations, MetricOptions options,
                                             RiskCalculator riskCalculator, boolean attachDuplicateHashes,
-                                            String className, Map<String, MethodMetric> previousMethods) {
+                                            String className, Map<String, MethodMetric> previousMethods,
+                                            List<FileError> methodLevelErrors) {
         String name = exec.getName();
         String kind = exec instanceof ASTConstructorDeclaration ? "CONSTRUCTOR" : "METHOD";
         int arity = exec.getArity();
@@ -119,57 +133,132 @@ final class PmdFileMetricsBuilder {
             return skippedShortAccessor(exec, sourceText, name, kind, signature, arity, start, end, physical,
                     attachDuplicateHashes, className, previousMethods);
         }
-        int cyclo = unboxOrZero(Metric.compute(JavaMetrics.CYCLO, exec, options));
-        int ncss = unboxOrZero(Metric.compute(JavaMetrics.NCSS, exec, options));
-        boolean heavy = PmdHeavyMetricGuard.skipExplosiveMetrics(cyclo, ncss);
-        int cognitive = unboxOrZero(Metric.compute(JavaMetrics.COGNITIVE_COMPLEXITY, exec, options));
-        int npath = PmdMetricsAligner.safeNpath(exec, options, cyclo, ncss);
-        PmdAstMethodStats.Stats stats = PmdAstMethodStats.analyze(exec);
-        HalsteadMetrics halstead = heavy ? HalsteadMetrics.EMPTY : PmdHalsteadApproximation.analyze(exec);
-        // Risk LOC = NCSS (yorum / boş satır hariç). physical satır aralığı yorumları da kapsar — skora girmez.
-        int codeLines = ncss > 0 ? ncss : Math.max(countCodeLinesExcludingComments(sourceText, start, end), 1);
+        try {
+            int cyclo = unboxOrZero(Metric.compute(JavaMetrics.CYCLO, exec, options));
+            int ncss = unboxOrZero(Metric.compute(JavaMetrics.NCSS, exec, options));
+            boolean heavy = PmdHeavyMetricGuard.skipExplosiveMetrics(cyclo, ncss);
+            int cognitive = unboxOrZero(Metric.compute(JavaMetrics.COGNITIVE_COMPLEXITY, exec, options));
+            int npath = PmdMetricsAligner.safeNpath(exec, options, cyclo, ncss);
+            PmdAstMethodStats.Stats stats = PmdAstMethodStats.analyze(exec);
+            HalsteadMetrics halstead = heavy ? HalsteadMetrics.EMPTY : PmdHalsteadApproximation.analyze(exec);
+            // Risk LOC = NCSS (yorum / boş satır hariç). physical satır aralığı yorumları da kapsar — skora girmez.
+            int codeLines = ncss > 0 ? ncss : Math.max(countCodeLinesExcludingComments(sourceText, start, end), 1);
 
-        MethodMetric skeleton = MethodMetric.withoutLegacyExtensions(
-                name, kind, signature, returnType(exec), start, end,
-                cyclo, physical, codeLines, stats.logicalStatements(), cognitive, stats.exitPoints(),
-                stats.catchClauses(), stats.switchCases(), 0, stats.lambdaCount(), stats.maxTryNestingDepth(),
-                stats.localVariableCount(), 0, stats.emptyCatchBlocks(), stats.catchExceptionOrThrowable(), 0,
-                0, stats.maxBooleanOperatorsInCondition(), stats.maxNestingDepth(), arity,
-                false, 0.0, RiskLevel.LOW, List.of(), null, "", "", npath, ncss);
+            MethodMetric skeleton = MethodMetric.withoutLegacyExtensions(
+                    name, kind, signature, returnType(exec), start, end,
+                    cyclo, physical, codeLines, stats.logicalStatements(), cognitive, stats.exitPoints(),
+                    stats.catchClauses(), stats.switchCases(), 0, stats.lambdaCount(), stats.maxTryNestingDepth(),
+                    stats.localVariableCount(), 0, stats.emptyCatchBlocks(), stats.catchExceptionOrThrowable(), 0,
+                    0, stats.maxBooleanOperatorsInCondition(), stats.maxNestingDepth(), arity,
+                    false, 0.0, RiskLevel.LOW, List.of(), null, "", "", npath, ncss);
 
-        MethodScanValues scan = MethodScanValues.withLegacyExtensions(
-                baseScanFromSkeleton(skeleton), halstead, List.of(), List.of());
-        scan = PmdViolationMethodEnricher.applyScanValues(scan, fileViolations, start, end);
-        Assessment risk = riskCalculator.assessMethod(scan);
+            MethodScanValues scan = MethodScanValues.withLegacyExtensions(
+                    baseScanFromSkeleton(skeleton), halstead, List.of(), List.of());
+            scan = PmdViolationMethodEnricher.applyScanValues(scan, fileViolations, start, end);
+            Assessment risk = riskCalculator.assessMethod(scan);
+            boolean god = riskCalculator.isGodMethod(scan);
+
+            PmdSourceMethodHashes.Hashes hashes = PmdSourceMethodHashes.fromSourceSlice(sourceText, start, end);
+            // Cache katman 2: methodHash === bodyHash (gövde). structuralHash yalnız benzerlik.
+            String bodyHash = hashes.bodyHash() == null ? "" : hashes.bodyHash();
+            String methodHash = bodyHash;
+            String structuralOut = attachDuplicateHashes ? hashes.structuralHash() : "";
+
+            String cacheKey = className + "#" + signature;
+            MethodMetric previous = previousMethods.get(cacheKey);
+            String previousBody = previous == null ? ""
+                    : (previous.methodHash() != null && !previous.methodHash().isEmpty()
+                    ? previous.methodHash()
+                    : previous.bodyHash() == null ? "" : previous.bodyHash());
+            boolean reuse = previous != null && !bodyHash.isEmpty() && bodyHash.equals(previousBody);
+            if (reuse) {
+                risk = new Assessment(previous.riskScore(), previous.riskLevel(), previous.riskFactors(),
+                        previous.riskBreakdown());
+                god = previous.godMethod();
+            }
+
+            return new MethodMetric(name, kind, signature, returnType(exec), start, end, cyclo, physical, codeLines,
+                    scan.logicalStatements(), cognitive, scan.exitPoints(), scan.catchClauses(), scan.switchCases(),
+                    scan.outboundDistinctCalls(), scan.lambdaCount(), scan.maxTryNestingDepth(), scan.localVariableCount(),
+                    scan.maxMethodCallChainLength(), scan.emptyCatchBlocks(), scan.catchExceptionOrThrowable(),
+                    scan.catchWithOnlyPrintStackTrace(), scan.primitiveObsessionIndex(),
+                    scan.maxBooleanOperatorsInCondition(), scan.maxNestingDepth(), arity, god, risk.score(), risk.level(),
+                    risk.factors(), risk.breakdown(), halstead, List.of(), List.of(), methodHash, reuse, List.of(),
+                    bodyHash, structuralOut, npath, ncss, false);
+        } catch (VirtualMachineError e) {
+            recordMethodMetricFailure(methodLevelErrors, relativePath, className, signature, start, end, e);
+            return failedMethodStub(sourceText, name, kind, signature, returnType(exec), start, end, physical, arity,
+                    riskCalculator, attachDuplicateHashes);
+        }
+    }
+
+    private static void recordMethodMetricFailure(List<FileError> sink, String relativePath, String className,
+                                                  String signature, int startLine, int endLine, Throwable t) {
+        if (sink == null) {
+            return;
+        }
+        String detail = analysisFailureDetail(t);
+        sink.add(new FileError(relativePath, "PMD metrics: " + detail, className, signature, startLine, endLine));
+    }
+
+    /**
+     * Metot içi analiz başarısız — nominal büyük metriklerle RiskCalculator'dan skor; sonuç KRİTİK bandına iter
+     * (gerçek ölçüm yapılamadı — manuel inceleme).
+     */
+    private static MethodMetric failedMethodStub(
+            String sourceText,
+            String name, String kind, String signature, String returnTypeLabel,
+            int start, int end, int physical, int arity,
+            RiskCalculator riskCalculator, boolean attachDuplicateHashes) {
+        int locNominal = Math.max(physical, 100);
+        int ccNominal = Math.max(50, PmdHeavyMetricGuard.CYCLO_HEAVY);
+        int nestNominal = 25;
+        MethodScanValues scan = MethodScanValues.zeros(ccNominal, locNominal, nestNominal, arity);
+        Assessment base = riskCalculator.assessMethod(scan);
+        double finalScore = RiskCalculator.SCORE_MAX;
+        java.util.ArrayList<String> factors = new java.util.ArrayList<>(base.factors());
+        factors.add(0, "METRICS_IMPUTED=true: PMD/JVM could not complete this method (stack/heap); score set to maximum for review; CC/LOC are nominal");
+        factors.add("PMD_ANALYSIS_INCOMPLETE: try -Xss/-Xmx or exclude; rerun with larger stack to obtain real metrics");
+        Assessment risk = new Assessment(finalScore, RiskLevel.fromScore(finalScore), factors, base.breakdown());
         boolean god = riskCalculator.isGodMethod(scan);
 
         PmdSourceMethodHashes.Hashes hashes = PmdSourceMethodHashes.fromSourceSlice(sourceText, start, end);
-        // Cache katman 2: methodHash === bodyHash (gövde). structuralHash yalnız benzerlik.
         String bodyHash = hashes.bodyHash() == null ? "" : hashes.bodyHash();
         String methodHash = bodyHash;
         String structuralOut = attachDuplicateHashes ? hashes.structuralHash() : "";
+        // Bu koşuda metrik tamamlanamadı — önbellekten eski (düşük) skoru ASLA yeniden kullanma.
+        boolean reuse = false;
 
-        String cacheKey = className + "#" + signature;
-        MethodMetric previous = previousMethods.get(cacheKey);
-        String previousBody = previous == null ? ""
-                : (previous.methodHash() != null && !previous.methodHash().isEmpty()
-                ? previous.methodHash()
-                : previous.bodyHash() == null ? "" : previous.bodyHash());
-        boolean reuse = previous != null && !bodyHash.isEmpty() && bodyHash.equals(previousBody);
-        if (reuse) {
-            risk = new Assessment(previous.riskScore(), previous.riskLevel(), previous.riskFactors(),
-                    previous.riskBreakdown());
-            god = previous.godMethod();
+        int npath = PmdMetricsAligner.NPATH_CAP;
+        int ncss = locNominal;
+        return new MethodMetric(name, kind, signature, returnTypeLabel, start, end, ccNominal, physical, locNominal,
+                locNominal,
+                0,
+                0, 0, 0,
+                0, 0, 0, 0,
+                0, 0, 0, 0,
+                0, 0, nestNominal,
+                arity,
+                god, risk.score(), risk.level(), risk.factors(), risk.breakdown(),
+                HalsteadMetrics.EMPTY, List.of(), List.of(),
+                methodHash, reuse, List.of(), bodyHash, structuralOut, npath, ncss, true);
+    }
+
+    private static String analysisFailureDetail(Throwable t) {
+        if (t instanceof StackOverflowError) {
+            return "Analysis aborted: expression or AST nesting too deep (stack overflow)";
         }
-
-        return new MethodMetric(name, kind, signature, returnType(exec), start, end, cyclo, physical, codeLines,
-                scan.logicalStatements(), cognitive, scan.exitPoints(), scan.catchClauses(), scan.switchCases(),
-                scan.outboundDistinctCalls(), scan.lambdaCount(), scan.maxTryNestingDepth(), scan.localVariableCount(),
-                scan.maxMethodCallChainLength(), scan.emptyCatchBlocks(), scan.catchExceptionOrThrowable(),
-                scan.catchWithOnlyPrintStackTrace(), scan.primitiveObsessionIndex(),
-                scan.maxBooleanOperatorsInCondition(), scan.maxNestingDepth(), arity, god, risk.score(), risk.level(),
-                risk.factors(), risk.breakdown(), halstead, List.of(), List.of(), methodHash, reuse, List.of(),
-                bodyHash, structuralOut, npath, ncss);
+        if (t instanceof OutOfMemoryError) {
+            return "Analysis aborted: out of memory while analyzing file";
+        }
+        if (t == null) {
+            return "unknown";
+        }
+        String msg = t.getMessage();
+        if (msg != null && !msg.isBlank()) {
+            return t.getClass().getSimpleName() + ": " + msg;
+        }
+        return t.getClass().getSimpleName();
     }
 
     /** 1–2 satır get/set/is: JavaMetrics, AST sayaç ve RiskCalculator yok. */
@@ -192,7 +281,7 @@ final class PmdFileMetricsBuilder {
         return new MethodMetric(name, kind, signature, returnType(exec), start, end, 1, physical, loc,
                 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, arity, false, 0.0, RiskLevel.LOW,
                 List.of(), null, HalsteadMetrics.EMPTY, List.of(), List.of(), methodHash, reuse, List.of(),
-                bodyHash, structuralOut, 1, loc);
+                bodyHash, structuralOut, 1, loc, false);
     }
 
     private static MethodScanValues baseScanFromSkeleton(MethodMetric method) {

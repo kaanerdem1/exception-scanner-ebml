@@ -273,6 +273,7 @@ public final class AnalysisReportJsonWriter {
         w.name("godMethod").value(m.godMethod());
         w.name("riskScore").value(m.riskScore());
         w.name("riskLevel").value(m.riskLevel().name());
+        w.name("metricsImputed").value(m.metricsImputed());
         writeStringList(w, "riskFactors", m.riskFactors());
         if (m.riskBreakdown() != null) {
             writeBreakdown(w, m.riskBreakdown());
@@ -305,6 +306,8 @@ public final class AnalysisReportJsonWriter {
                 "finalScore ≈ dominantWeight×max(subScore)+blendWeight×weightedBlend; see riskModel.formula.");
         w.name("methodHash").value(
                 "Incremental cache key (analyzer-state.json or pmd-analyzer-state.json). Independent of scan_run_id / DB.");
+        w.name("metricsImputed").value(
+                "true = PMD/JVM could not finish this method; riskScore is policy max (100), CC/LOC nominal; see riskFactors.");
         w.name("analysisReused").value(
                 "true = reused prior risk/metrics from state (methodHash unchanged). File-level skip sets all methods reused.");
         w.name("bodyHash").value("Duplicate detection: BIREBIR_METIN (normalized body text, names/literals kept).");
@@ -579,6 +582,10 @@ public final class AnalysisReportJsonWriter {
             w.name("file").value(e.file());
             w.name("message").value(e.message());
             w.name("category").value(e.category().name());
+            w.name("className").value(e.className() == null ? "" : e.className());
+            w.name("methodSignature").value(e.methodSignature() == null ? "" : e.methodSignature());
+            w.name("startLine").value(e.startLine());
+            w.name("endLine").value(e.endLine());
             w.endObject();
         }
         w.endArray();

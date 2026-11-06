@@ -152,7 +152,7 @@ final class PmdMetricsAligner {
                 method.parameterCount(), god, risk.score(), risk.level(), risk.factors(), risk.breakdown(),
                 method.halstead(), method.exceptionSmells(), method.codeSmells(), method.methodHash(),
                 method.analysisReused(), method.accessedFieldNames(), method.bodyHash(), method.structuralHash(),
-                pmd.npathComplexity(), pmd.ncssCount());
+                pmd.npathComplexity(), pmd.ncssCount(), method.metricsImputed());
     }
 
     private static ClassMetric copyClassWithMethods(ClassMetric type, List<MethodMetric> methods, int wmc,

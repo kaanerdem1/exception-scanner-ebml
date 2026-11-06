@@ -54,7 +54,12 @@ public record MethodMetric(
         /** PMD {@link net.sourceforge.pmd.lang.java.metrics.JavaMetrics#NPATH} (capped). */
         int npathComplexity,
         /** PMD {@link net.sourceforge.pmd.lang.java.metrics.JavaMetrics#NCSS}. */
-        int ncssCount) {
+        int ncssCount,
+        /**
+         * true: ölçüm JVM/PMD limiti yüzünden tamamlanamadı; CC/LOC vb. nominal,
+         * risk skoru el ile yükseltildi (policy: maks. inceleme bayrağı).
+         */
+        boolean metricsImputed) {
 
     public MethodMetric {
         halstead = halstead == null ? HalsteadMetrics.EMPTY : halstead;
@@ -65,6 +70,16 @@ public record MethodMetric(
         bodyHash = bodyHash == null ? "" : bodyHash;
         structuralHash = structuralHash == null ? "" : structuralHash;
         returnType = returnType == null ? "" : returnType;
+    }
+
+    MethodMetric withImputed(boolean imputed) {
+        return new MethodMetric(name, kind, signature, returnType, startLine, endLine, cyclomaticComplexity, physicalLines,
+                codeLines, logicalStatements, cognitiveComplexity, exitPoints, catchClauses, switchCases,
+                outboundDistinctCalls, lambdaCount, maxTryNestingDepth, localVariableCount, maxMethodCallChainLength,
+                emptyCatchBlocks, catchExceptionOrThrowable, catchWithOnlyPrintStackTrace, primitiveObsessionIndex,
+                maxBooleanOperatorsInCondition, maxNestingDepth, parameterCount, godMethod, riskScore, riskLevel,
+                riskFactors, riskBreakdown, halstead, exceptionSmells, codeSmells, methodHash, analysisReused,
+                accessedFieldNames, bodyHash, structuralHash, npathComplexity, ncssCount, imputed);
     }
 
     /** EXACT_STRUCTURE duplicate gruplama: dönüş tipi + imza (parametre tipleri). */
@@ -110,6 +125,6 @@ public record MethodMetric(
                 maxBooleanOperatorsInCondition, maxNestingDepth, parameterCount, godMethod, riskScore, riskLevel,
                 riskFactors, riskBreakdown, HalsteadMetrics.EMPTY, List.of(), List.of(), "", false, List.of(),
                 bodyHash == null ? "" : bodyHash, structuralHash == null ? "" : structuralHash, npathComplexity,
-                ncssCount);
+                ncssCount, false);
     }
 }

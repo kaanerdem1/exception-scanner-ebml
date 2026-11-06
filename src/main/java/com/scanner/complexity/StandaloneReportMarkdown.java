@@ -731,17 +731,30 @@ final class StandaloneReportMarkdown {
             String file = "";
             String message = "";
             ScanErrorCategory category = ScanErrorCategory.UNEXPECTED;
+            String className = "";
+            String methodSignature = "";
+            int startLine = -1;
+            int endLine = -1;
             reader.beginObject();
             while (reader.hasNext()) {
                 switch (reader.nextName()) {
                     case "file" -> file = reader.nextString();
                     case "message" -> message = reader.nextString();
                     case "category" -> category = ScanErrorCategory.valueOf(reader.nextString());
+                    case "className" -> className = reader.nextString();
+                    case "methodSignature" -> methodSignature = reader.nextString();
+                    case "startLine" -> startLine = reader.nextInt();
+                    case "endLine" -> endLine = reader.nextInt();
                     default -> skipValue(reader);
                 }
             }
             reader.endObject();
-            errors.add(new AnalysisReport.FileError(file, message, category));
+            if (!className.isEmpty() || !methodSignature.isEmpty() || startLine >= 0 || endLine >= 0) {
+                errors.add(new AnalysisReport.FileError(file, message, category, className, methodSignature, startLine,
+                        endLine));
+            } else {
+                errors.add(new AnalysisReport.FileError(file, message, category));
+            }
         }
         reader.endArray();
         return errors;
@@ -797,8 +810,20 @@ final class StandaloneReportMarkdown {
         }
         out.write("## Okunamayan dosyalar\n\n");
         for (AnalysisReport.FileError e : errors) {
-            out.write("- `" + escapeCell(e.file()) + "` *(kategori: " + e.category().labelTr() + ")*: "
-                    + escapeCell(e.message()) + "\n");
+            String location = "";
+            if (e.className() != null && !e.className().isEmpty()
+                    && e.methodSignature() != null && !e.methodSignature().isEmpty()) {
+                location = " — `" + escapeCell(e.className()) + "#" + escapeCell(e.methodSignature()) + "`";
+                if (e.startLine() > 0) {
+                    location += " (satır " + e.startLine();
+                    if (e.endLine() > e.startLine()) {
+                        location += "-" + e.endLine();
+                    }
+                    location += ")";
+                }
+            }
+            out.write("- `" + escapeCell(e.file()) + "` *(kategori: " + e.category().labelTr() + ")*"
+                    + location + ": " + escapeCell(e.message()) + "\n");
         }
         out.write("\n");
     }

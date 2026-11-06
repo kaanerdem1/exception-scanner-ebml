@@ -314,18 +314,19 @@ public final class PmdNativeProjectScanner {
             for (Path source : sources) {
                 Path src = source;
                 futures.add(pool.submit(() -> {
+                    if (Thread.interrupted()) {
+                        Thread.interrupted();
+                    }
                     try {
                         metricsOne(src, base, files, errorSink, violationsByPath, attachDuplicateHashes,
                                 incrementalEngine, cacheCounters);
                     } catch (Throwable t) {
-                        if (t instanceof VirtualMachineError) {
-                            throw t;
-                        }
                         String relative = JavaSourceDiscovery.relativePath(base, src);
+                        String detail = metricsFailureDetail(t);
                         System.err.printf(Locale.ROOT,
-                                "[PMD-NATIVE]   ADIM 4/7 yakalanmayan hata: %s — %s%n",
-                                relative, describe(t));
-                        errorSink.add(new FileError(relative, "PMD metrics: " + describe(t)));
+                                "[PMD-NATIVE]   ADIM 4/7 dosya atlandı: %s — %s%n",
+                                relative, detail);
+                        errorSink.add(new FileError(relative, "PMD metrics: " + detail));
                     }
                     int n = processed.incrementAndGet();
                     int every = Math.max(1, scanOptions.progressEvery());
@@ -337,27 +338,36 @@ public final class PmdNativeProjectScanner {
             }
             for (int i = 0; i < futures.size(); i++) {
                 Future<Void> future = futures.get(i);
+                Path src = sources.get(i);
+                String relative = JavaSourceDiscovery.relativePath(base, src);
                 try {
                     future.get(METRICS_FILE_TIMEOUT_SEC, TimeUnit.SECONDS);
                 } catch (TimeoutException e) {
-                    Path src = sources.get(i);
-                    String relative = JavaSourceDiscovery.relativePath(base, src);
                     System.err.printf(Locale.ROOT,
                             "[PMD-NATIVE]   ADIM 4/7 zaman aşımı (%ds): %s — dosya atlandı%n",
                             METRICS_FILE_TIMEOUT_SEC, relative);
                     errorSink.add(new FileError(relative, "PMD metrics timeout " + METRICS_FILE_TIMEOUT_SEC + "s"));
-                    future.cancel(true);
+                    future.cancel(false);
+                } catch (ExecutionException e) {
+                    Throwable cause = e.getCause() != null ? e.getCause() : e;
+                    String detail = metricsFailureDetail(cause);
+                    System.err.printf(Locale.ROOT,
+                            "[PMD-NATIVE]   ADIM 4/7 dosya atlandı: %s — %s%n",
+                            relative, detail);
+                    errorSink.add(new FileError(relative, "PMD metrics: " + detail));
                 }
             }
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new RuntimeException("PMD metrics interrupted", e);
-        } catch (ExecutionException e) {
-            Throwable cause = e.getCause() != null ? e.getCause() : e;
-            System.err.println("[PMD-NATIVE] ✗ ADIM 4/7: paralel metrik görevi patladı — " + describe(cause));
-            throw new RuntimeException("PMD metrics failed: " + describe(cause), cause);
         } finally {
-            pool.shutdownNow();
+            pool.shutdown();
+            try {
+                pool.awaitTermination(5, TimeUnit.MINUTES);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                pool.shutdownNow();
+            }
         }
         if (scanOptions.reportDetail() == ReportDetail.SUMMARY) {
             return files.stream().map(PmdNativeProjectScanner::summaryStub).collect(Collectors.toList());
@@ -393,8 +403,10 @@ public final class PmdNativeProjectScanner {
             Map<String, MethodMetric> previousMethods = incrementalEngine != null
                     ? incrementalEngine.previousMethodsByKey(relative)
                     : Map.of();
+            List<FileError> methodErrors = new ArrayList<>();
             FileMetric metric = PmdFileMetricsBuilder.build(relative, text, languageLevel, fileViolations,
-                    riskCalculator, attachDuplicateHashes, previousMethods, fileHash);
+                    riskCalculator, attachDuplicateHashes, previousMethods, fileHash, methodErrors);
+            errors.addAll(methodErrors);
             files.add(metric);
             if (cacheCounters != null) {
                 cacheCounters.filesReanalyzed++;
@@ -404,9 +416,24 @@ public final class PmdNativeProjectScanner {
             }
         } catch (Exception e) {
             System.err.printf(Locale.ROOT,
-                    "[PMD-NATIVE]   ADIM 4/7 dosya hatası: %s — %s%n", relative, describe(e));
+                    "[PMD-NATIVE]   ADIM 4/7 dosya atlandı: %s — %s%n", relative, describe(e));
             errors.add(new FileError(relative, "PMD metrics: " + describe(e)));
+        } catch (VirtualMachineError e) {
+            String detail = metricsFailureDetail(e);
+            System.err.printf(Locale.ROOT,
+                    "[PMD-NATIVE]   ADIM 4/7 dosya atlandı: %s — %s%n", relative, detail);
+            errors.add(new FileError(relative, "PMD metrics: " + detail));
         }
+    }
+
+    private static String metricsFailureDetail(Throwable t) {
+        if (t instanceof StackOverflowError) {
+            return "Analysis aborted: expression or AST nesting too deep (stack overflow)";
+        }
+        if (t instanceof OutOfMemoryError) {
+            return "Analysis aborted: out of memory while analyzing file";
+        }
+        return describe(t);
     }
 
     private static String describe(Throwable t) {

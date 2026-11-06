@@ -80,6 +80,9 @@ public final class MethodAccessorFilter {
         if (method == null) {
             return true;
         }
+        if (method.metricsImputed()) {
+            return false;
+        }
         if (isTrivialShortAccessor(method) || isSimpleGetterOrSetter(method)) {
             return true;
         }
